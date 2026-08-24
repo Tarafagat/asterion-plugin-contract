@@ -1,0 +1,49 @@
+name: dummy-fs-provider
+version: "1.0.0"
+description: "Plugin de referencia del Asterion Plugin Contract — 'aprovisiona' archivos de texto locales en vez de servidores reales, para que el flujo completo (CRUD, permisos, health, lifecycle) se pueda probar y leer sin gastar un centavo en infraestructura de verdad."
+author: "Asterion"
+license: "Apache-2.0"
+contract_version: "asterion.plugin/v1"
+
+language:
+  name: go
+  version: "1.25"
+
+start:
+  command: ./dummy-fs-provider
+port: 0
+health_path: /health
+
+config_schema:
+  - key: data_dir
+    label: "Directorio donde 'aprovisionar' los archivos"
+    type: string
+    required: false
+    default: "./data"
+
+api:
+  base_path: /api/v1
+  openapi: api/openapi.yaml
+
+permissions:
+  network: []
+  filesystem: ["./data"]
+  database: false
+  secrets: false
+
+resources:
+  - name: files
+    endpoint: /files
+    schema: resources/schemas/file.json
+    primary_key: name
+    crud: [create, read, update, delete, list]
+
+actions:
+  - name: wipe
+    method: POST
+    endpoint: /files/wipe
+    description: "Borra todos los archivos 'aprovisionados' — vuelve al estado inicial."
+
+events:
+  publishes: [file.created, file.updated, file.deleted]
+  subscribes: []

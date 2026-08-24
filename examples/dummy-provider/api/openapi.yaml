@@ -1,0 +1,49 @@
+openapi: 3.0.3
+info:
+  title: dummy-fs-provider
+  version: "1.0.0"
+  description: >
+    Plugin de referencia del Asterion Plugin Contract. "Aprovisiona"
+    archivos de texto locales en vez de servidores reales.
+paths:
+  /files:
+    get:
+      operationId: listFiles
+      summary: Lista los archivos aprovisionados
+      responses:
+        "200":
+          description: OK
+    post:
+      operationId: createFile
+      summary: Crea un archivo nuevo
+      responses:
+        "201":
+          description: Creado
+  /files/{name}:
+    get:
+      operationId: readFile
+      summary: Lee el contenido de un archivo
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: No existe
+    put:
+      operationId: updateFile
+      summary: Reemplaza el contenido de un archivo
+      responses:
+        "200":
+          description: OK
+    delete:
+      operationId: deleteFile
+      summary: Borra un archivo
+      responses:
+        "204":
+          description: Borrado
+  /files/wipe:
+    post:
+      operationId: wipeFiles
+      summary: Borra todos los archivos aprovisionados
+      responses:
+        "200":
+          description: OK

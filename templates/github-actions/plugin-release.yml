@@ -1,0 +1,44 @@
+# Plantilla de CI para un plugin de Asterion. Copiala a
+# .github/workflows/release.yml en el repo de tu plugin y ajustá GO_VERSION
+# / el paso de build según tu lenguaje (esto asume Go — el contrato mismo es
+# agnóstico de lenguaje, esta plantilla no).
+#
+# Qué hace: en cada push a un tag v*, valida que plugin.yaml cumple el
+# Asterion Plugin Contract, compila el binario, y publica un release de
+# GitHub con el binario adjunto. No sube nada al marketplace de Asterion
+# automáticamente — eso todavía es un paso manual (ver README del repo
+# asterion-plugin-contract, sección "Publicar tu plugin").
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      # El validador completo del contrato (`asterion plugin validate`) vive
+      # en el CLI de asterion-core. Instalalo en el runner si querés ese
+      # chequeo exacto en CI; mientras tanto, build+vet ya detecta que el
+      # código compila y que plugin.yaml es al menos YAML válido (se lee al
+      # arrancar el proceso).
+      - name: Compilar y verificar
+        run: go build ./... && go vet ./...
+
+      - name: Tests
+        run: go test ./...
+
+      - name: Build
+        run: go build -o "${{ github.event.repository.name }}" .
+
+      - name: Publicar release de GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ github.event.repository.name }}

@@ -1,0 +1,12 @@
+module {{.Name}}
+
+go 1.25.0
+
+require github.com/Tarafagat/asterion-plugin-contract v0.0.0-00010101000000-000000000000
+
+// asterion-plugin-contract todavía no está publicado en ningún registry —
+// hasta que lo esté (`go get` normal), este plugin necesita tenerlo
+// clonado como carpeta hermana para poder compilar. Ajustá la ruta si tu
+// checkout está en otro lugar, o borrá esta línea una vez el módulo esté
+// publicado.
+replace github.com/Tarafagat/asterion-plugin-contract => ../asterion-plugin-contract

@@ -1,0 +1,41 @@
+name: {{.Name}}
+version: "0.1.0"
+description: "{{.Description}}"
+author: "{{.Author}}"
+license: "Apache-2.0"
+contract_version: "asterion.plugin/v1"
+
+language:
+  name: go
+  version: "1.25"
+
+start:
+  command: ./{{.Name}}
+port: 0
+health_path: /health
+
+config_schema: []
+
+api:
+  base_path: /api/v1
+
+permissions:
+  network: []
+  filesystem: []
+  database: false
+  secrets: false
+
+resources:
+  - name: items
+    endpoint: /items
+    primary_key: id
+    crud: [create, read, list]
+
+actions:
+  - name: ping
+    method: GET
+    endpoint: /ping
+
+events:
+  publishes: []
+  subscribes: []

@@ -1,0 +1,30 @@
+# {{.Name}}
+
+{{.Description}}
+
+Generado por `asterion plugin init --language go`. Ya cumple el
+[Asterion Plugin Contract v1](https://github.com/Tarafagat/asterion-plugin-contract/blob/main/spec/apc-v1.md):
+tiene `plugin.yaml`, responde `/health`, y expone el resource `items` y la
+action `ping` que el manifest declara.
+
+## Desarrollo local
+
+```
+go build -o {{.Name}} .
+asterion plugin validate .
+asterion plugin dev .        # arranca el binario y valida que la API real
+                              # coincida con lo que plugin.yaml declara
+```
+
+## Publicarlo
+
+1. Reemplazá la lógica de `main.go` por la de tu integración real.
+2. Ajustá `plugin.yaml`: `config_schema` (qué necesita configurarse),
+   `permissions` (qué va a tocar: red, filesystem, base de datos, secretos),
+   y `resources`/`actions` según lo que tu API realmente exponga.
+3. Subilo a un repo de git — `asterion plugin install <url>` lo instala
+   desde ahí.
+
+Ver el plugin de referencia (`dummy-fs-provider`) en el repo de
+asterion-plugin-contract para un ejemplo completo con tests y permisos
+declarados de verdad.

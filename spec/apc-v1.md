@@ -1,0 +1,236 @@
+# Asterion Plugin Contract — v1 (`asterion.plugin/v1`)
+
+> "Un plugin de Asterion es una aplicación independiente. Asterion no
+> necesita conocer cómo está implementada; solamente necesita conocer y
+> validar el Asterion Plugin Contract."
+
+Este documento es la especificación. La implementación de referencia (lo
+que realmente se ejecuta) es el paquete Go [`apc`](../apc/manifest.go) —
+si algo acá y el código alguna vez difieren, el código manda y este
+documento tiene un bug.
+
+## 1. Principio y forma general
+
+Un plugin es un **proceso HTTP separado**, en cualquier lenguaje, que
+Asterion instala, arranca, detiene y administra desde afuera — nunca código
+que se carga dentro del proceso de Asterion. Todo lo que Asterion necesita
+saber de un plugin está declarado en un único archivo, `plugin.yaml`, en la
+raíz de su repositorio. Instalar un plugin nunca ejecuta nada del repo
+salvo leer ese archivo.
+
+```
+mi-plugin/
+├── plugin.yaml          # el manifiesto — obligatorio
+├── api/
+│   └── openapi.yaml       # opcional: contrato HTTP completo
+├── resources/
+│   └── schemas/            # opcional: JSON Schema por resource
+├── migrations/               # opcional: si permissions.database es true
+├── src/                        # el código del plugin — opaco para Asterion
+├── tests/
+└── README.md
+```
+
+## 2. El manifiesto (`plugin.yaml`)
+
+Todos los campos nuevos de esta sección son **opcionales** — un
+`plugin.yaml` que solo tiene `name`/`version`/`start`/`port` (el formato
+anterior a este contrato) sigue siendo válido.
+
+| Campo | Obligatorio | Descripción |
+|---|---|---|
+| `name` | sí | Identificador único. `^[a-z0-9][a-z0-9_-]{1,63}$` |
+| `version` | sí | Versión semántica del plugin (no del contrato) |
+| `description`, `author`, `license`, `repo` | no | Metadata |
+| `contract_version` | no (default `asterion.plugin/v1`) | Qué versión de este contrato implementa |
+| `language.name`, `language.version` | no | Informativo — nunca decide cómo se ejecuta el plugin |
+| `start.command`, `start.args` | `start.command` sí | Cómo arrancar el proceso |
+| `port` | sí (`0` = auto) | Puerto TCP en loopback; `0` deja que Asterion elija uno libre |
+| `health_path` | no (default `/health`) | Endpoint que confirma que el proceso levantó de verdad |
+| `config_schema` | no | Qué configuración necesita — genera el formulario en el dashboard |
+| `api.base_path`, `api.openapi` | no | Dónde vive la API y, opcionalmente, su OpenAPI |
+| `permissions` | no | Qué necesita tocar — declarativo (§7) |
+| `resources` | no | Qué recursos administrables expone (§5) |
+| `actions` | no | Qué operaciones no-CRUD expone (§6) |
+| `events` | no | Qué eventos publica/consume — declarativo (§8) |
+
+### Ejemplo completo
+
+```yaml
+name: dummy-fs-provider
+version: "1.0.0"
+description: "Plugin de referencia — aprovisiona archivos de texto locales"
+author: "Asterion"
+license: "Apache-2.0"
+contract_version: "asterion.plugin/v1"
+
+language:
+  name: go
+  version: "1.25"
+
+start:
+  command: ./dummy-fs-provider
+port: 0
+health_path: /health
+
+config_schema:
+  - key: data_dir
+    label: "Directorio donde aprovisionar"
+    type: string
+    default: "./data"
+
+api:
+  base_path: /api/v1
+  openapi: api/openapi.yaml
+
+permissions:
+  filesystem: ["./data"]
+
+resources:
+  - name: files
+    endpoint: /files
+    schema: resources/schemas/file.json
+    primary_key: name
+    crud: [create, read, update, delete, list]
+
+actions:
+  - name: wipe
+    method: POST
+    endpoint: /files/wipe
+
+events:
+  publishes: [file.created, file.updated, file.deleted]
+```
+
+Ver el plugin completo y funcionando en
+[`examples/dummy-provider`](../examples/dummy-provider).
+
+## 3. Configuración
+
+Cada entrada de `config_schema` es un dato que el plugin necesita para
+operar. Asterion genera el formulario de configuración automáticamente a
+partir de esta lista — el plugin no escribe ni una línea de UI. Los campos
+marcados `secret: true` se guardan cifrados (AES-256-GCM, clave local) y
+nunca se vuelven a mostrar en texto plano.
+
+El plugin recibe su configuración exclusivamente como variables de entorno
+`ASTERION_PLUGIN_CONFIG_<CLAVE>` (en mayúsculas) al arrancar — nunca un
+archivo, nunca un argumento de línea de comandos. Es el único canal; así un
+plugin nunca tiene la tentación de loguear su propio archivo de secretos
+por error.
+
+## 4. API
+
+La API del plugin es HTTP, en el `base_path` declarado (default: raíz).
+`api.openapi`, si se declara, es una ruta relativa dentro del repo del
+plugin a su contrato OpenAPI 3 completo — Asterion lo usa para mostrar
+documentación interactiva, no para generar código todavía.
+
+## 5. Resources
+
+Un `resource` es algo que Asterion puede administrar en nombre del plugin
+con una UI de tabla/formulario genérica: listar, crear, editar, borrar.
+`crud` declara qué subconjunto de esas cinco operaciones (`create`, `read`,
+`update`, `delete`, `list`) el endpoint realmente atiende — el dashboard
+solo ofrece los botones que el plugin dijo que sabe responder. `schema`,
+si se declara, apunta a un JSON Schema del recurso (usado para generar el
+formulario de creación/edición con los tipos correctos).
+
+## 6. Actions
+
+No todo es CRUD. Una `action` es una operación con nombre (`issue_invoice`,
+`restart_service`, `wipe`) sobre un método y endpoint HTTP específicos. El
+dashboard las representa como botones con el nombre declarado, no como
+filas de una tabla.
+
+## 7. Permisos
+
+`permissions` es lo que el plugin **declara** que necesita: qué hosts de
+red, qué rutas de filesystem, si necesita una base de datos, si maneja
+secretos. **En esta versión del contrato es puramente declarativo.**
+Asterion se lo muestra al usuario en el momento de instalar — el mismo
+patrón de consentimiento informado que los permisos de una app móvil — y
+lo deja registrado, pero no lo hace cumplir a nivel de sistema operativo:
+un plugin corre como proceso normal, con los mismos privilegios del
+usuario que lo instaló. Forzar esto de verdad requeriría correr el plugin
+dentro de un contenedor o VM (ver [Asterion Lab](https://github.com/Tarafagat/asterion-lab))
+en vez de como proceso directo — un cambio de arquitectura mayor, fuera
+del alcance de v1, pero una evolución natural del contrato más adelante.
+
+## 8. Eventos
+
+`events.publishes`/`events.subscribes` documentan qué eventos de dominio
+emite o consume el plugin (`invoice.created`, `customer.created`, etc.).
+**En v1 esto es solo documentación** — no existe todavía un bus de eventos
+en Asterion que los transporte. Se incluye desde ahora en el contrato para
+que un `plugin.yaml` escrito hoy no tenga que cambiar de forma el día que
+ese bus exista.
+
+## 9. Health check
+
+Todo plugin debe responder en `health_path` (default `/health`) con un
+código HTTP 2xx cuando está sano. `pdk.HealthHandler` (Go) devuelve además
+un cuerpo `{"status": "healthy"|"degraded"|"unhealthy", "detail": "..."}`
+— Asterion hoy solo mira el código HTTP para decidir si el arranque tuvo
+éxito, pero el cuerpo queda disponible para una vista de estado más
+detallada en el dashboard.
+
+## 10. Lifecycle
+
+Asterion administra un plugin instalado con estas operaciones (ver
+`asterion plugin --help`):
+
+| Comando | Qué hace |
+|---|---|
+| `install <repo>` | Clona el repo, valida `plugin.yaml`, registra el plugin |
+| `config set` / `config show` | Guarda/muestra la configuración (cifrada) |
+| `start` | Arranca el proceso, espera el health check |
+| `status` | Reconcilia el estado guardado contra si el proceso sigue vivo |
+| `stop` | Envía `SIGTERM` |
+| `remove` | Detiene, borra el repo clonado y la configuración |
+| `connect --project <id>` | Vincula el plugin a un proyecto de Asterion Cloud |
+
+No hay un paso de "update" separado en v1: reinstalar (`remove` + `install`
+de nuevo) cubre ese caso hasta que exista una necesidad real de distinguir
+"actualizar" de "reinstalar".
+
+## 11. Versionado y compatibilidad
+
+`contract_version` identifica qué versión de este documento implementa el
+manifiesto. Si no se declara, se asume `asterion.plugin/v1` (compatibilidad
+con manifiestos de antes de que este campo existiera). Si se declara una
+versión que Asterion no reconoce, la instalación se rechaza explícitamente
+en vez de asumir que es compatible — la lista de versiones soportadas vive
+en `apc.ContractVersion` y crece a medida que existan versiones futuras del
+contrato.
+
+## 12. Herramientas
+
+- **`asterion plugin init --language go`** — scaffolding: genera un plugin
+  en Go que ya cumple el contrato (health check + un resource + una action
+  de ejemplo), listo para reemplazar la lógica de negocio.
+- **`asterion plugin validate <dir>`** — valida `plugin.yaml` estructuralmente
+  y confirma que los archivos que referencia (`api.openapi`,
+  `resources[].schema`) existen y son parseables.
+- **`asterion plugin dev <dir>`** — sandbox de pruebas local: arranca el
+  plugin con su propio `start.command`, espera el health check, y hace
+  llamadas de descubrimiento (no destructivas) a cada `resource`/`action`
+  declarado, reportando si la API real coincide con lo que el manifiesto
+  promete.
+- **`asterion plugin from-openapi <openapi.yaml>`** — transformador: si ya
+  tenés una API REST propia, infiere un `plugin.yaml` de partida
+  (resources/actions) a partir de su OpenAPI, agrupando por patrones CRUD.
+  Heurístico, no perfecto — ahorra el primer borrador, no reemplaza el
+  criterio del autor.
+- **[`sdk/go/pdk`](../sdk/go/pdk)** — utilidades para plugins en Go: config,
+  logging estándar, forma de error unificada, health handler.
+
+## 13. Cómo encaja `asterion-language`
+
+Este contrato es la especificación que un futuro `asterion-language` va a
+*apuntar*, no lo contrario: la idea es que ese proyecto (todavía no
+existe) pueda generar proyectos que ya cumplen el APC de entrada, validar
+manifiestos, y eventualmente generar SDKs para otros lenguajes — pero el
+contrato en sí no depende de que exista un lenguaje propio, y nunca lo
+hará: cualquier lenguaje que pueda hablar HTTP puede implementar un plugin
+de Asterion.

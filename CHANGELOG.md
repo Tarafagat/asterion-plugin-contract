@@ -26,3 +26,15 @@ Este proyecto todavía no tiene releases etiquetados en git.
   de texto locales en vez de servidores reales — CRUD completo, permisos
   declarados, tests, `openapi.yaml` y JSON Schema reales.
 - Plantilla de GitHub Actions para publicar un plugin (`templates/github-actions`).
+- **`pdk.MountFrontend`**: un plugin puramente REST, sin ningún frontend
+  propio, ya no queda "sin cara" — si `frontend/dist` no existe (o existe
+  vacío), el propio Plugin Contract genera y sirve en `GET /` una página
+  de documentación armada en el momento a partir del `plugin.yaml` del
+  plugin (características, qué configuración necesita, tabla de
+  endpoints con método/ruta/estructura) — el mismo contenido que ya
+  muestra el panel de un plugin en el dashboard de `asterion-core`, pero
+  servido directo por el proceso del plugin. Si `frontend/dist` sí existe,
+  se sirve tal cual, sin cambios de comportamiento. `pdk.DefaultFrontendHandler`
+  queda disponible aparte para quien quiera montarlo a mano. Adoptado por
+  `asterion-mail-plugin-basic` y `asterion-firewall-analysis` como
+  reemplazo de su fallback anterior (un JSON de "todavía no hay build").

@@ -5,6 +5,30 @@ Este proyecto todavía no tiene releases etiquetados en git.
 
 ## [Unreleased]
 
+### Changed
+- **`spec/apc-v1.md` gana una sección formal de `declared` / `implemented`
+  / `enforced`** (nueva §2, todo lo posterior se corrió +1). Motivada por
+  una revisión externa del contrato: varias capacidades (`permissions`,
+  `events`) están descritas en el mismo nivel de detalle que otras que sí
+  tienen efecto real (`contract_version`, `health_path`), sin que el
+  documento distinguiera "está en el schema" de "Asterion realmente hace
+  algo con esto" de "Asterion lo hace cumplir". La nueva sección define
+  los tres niveles y una tabla que clasifica cada capacidad del contrato,
+  verificada contra el código real (no contra lo que el spec anterior
+  decía en prosa) — en particular, confirmado por grep que `permissions`
+  y `events` nunca se leen en ningún `.go` de `asterion-core` más allá de
+  pasar la struct de un lado a otro; `permissions` sí se muestra en el
+  dashboard (`frontend-core/src/App.tsx`, "Permisos declarados"), `events`
+  no se lee en absoluto todavía. §7 (Permisos) y §8 (Eventos, numeración
+  vieja) ahora referencian la tabla en vez de repetir la explicación con
+  otras palabras.
+- **§13 (antes "Cómo encaja `asterion-language`") estaba desactualizada**:
+  decía "todavía no existe" sobre un proyecto que para cuando se escribió
+  este cambio ya tiene lexer/parser/semantic/CLI funcionando y compila
+  manifiestos reales (`asterion plugin from-asterion`, repo hermano
+  `asterion-language`). Reescrita para describir la integración real en
+  vez de la aspiracional.
+
 ### Added
 - Especificación v1 del Asterion Plugin Contract (`asterion.plugin/v1`):
   manifiesto extendido (`contract_version`, `language`, `api`, `permissions`,

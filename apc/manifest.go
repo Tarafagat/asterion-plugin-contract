@@ -62,13 +62,31 @@ type ConfigField struct {
 	Default  string `yaml:"default,omitempty" json:"default,omitempty"`
 }
 
-// LanguageSpec es puramente informativo — Asterion nunca lo usa para decidir
-// cómo ejecutar nada (eso lo decide siempre start.command). Sirve para que
-// el dashboard y el marketplace puedan mostrar en qué está escrito un
-// plugin, y para que asterion-language sepa qué generador usar más adelante.
+// LanguageSpec identifica en qué está escrito el plugin — el dashboard y
+// el marketplace lo muestran, y asterion-core lo usa para decidir CÓMO
+// prepararlo (`asterion plugin build`/`plugin start --build`/`plugin
+// system apply --build`): Name="go" compila con `go build`; Name="python"
+// sincroniza (o crea, si hace falta) un virtualenv e instala
+// Requirements ahí. Sigue sin decidir CÓMO EJECUTARLO — eso lo sigue
+// diciendo siempre start.command, sin excepción.
+//
+// Venv/Requirements son opcionales — sin declararlos, un plugin Python se
+// sigue infiriendo por convención a partir de start.command (si es
+// "./backend/venv/bin/python", el venv es "backend/venv" y
+// requirements.txt vive en "backend/requirements.txt", como ya hace
+// asterion-sii) — declararlos explícito es para cuando el propio layout
+// del plugin no seas esa convención.
 type LanguageSpec struct {
 	Name    string `yaml:"name,omitempty" json:"name,omitempty"`
 	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	// Venv es la ruta (relativa a la raíz del plugin) donde crear/buscar
+	// el virtualenv de Python — ej. "backend/venv". Solo tiene efecto si
+	// Name="python"; en cualquier otro lenguaje se ignora.
+	Venv string `yaml:"venv,omitempty" json:"venv,omitempty"`
+	// Requirements es la ruta (relativa a la raíz del plugin) al
+	// requirements.txt a instalar en Venv — ej. "backend/requirements.txt".
+	// Solo tiene efecto junto con Venv/Name="python".
+	Requirements string `yaml:"requirements,omitempty" json:"requirements,omitempty"`
 }
 
 // APISpec describe la API HTTP que expone el plugin. OpenAPI es una ruta

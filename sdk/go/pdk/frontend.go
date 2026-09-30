@@ -141,7 +141,7 @@ thead th{color:var(--gold);font-size:.7rem;text-transform:uppercase;letter-spaci
           <td>{{.Label}}</td>
           <td>{{.Type}}</td>
           <td>{{if .Required}}sí{{else}}no{{end}}</td>
-          <td>{{if .Secret}}sí{{else}}no{{end}}</td>
+          <td>{{if .IsSecret}}sí{{else}}no{{end}}</td>
         </tr>
         {{end}}
       </tbody>

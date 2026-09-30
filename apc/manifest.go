@@ -56,10 +56,23 @@ type StartSpec struct {
 type ConfigField struct {
 	Key      string `yaml:"key" json:"key"`
 	Label    string `yaml:"label" json:"label"`
-	Type     string `yaml:"type" json:"type"` // string | number | bool
+	Type     string `yaml:"type" json:"type"` // string | number | bool | secret
 	Secret   bool   `yaml:"secret,omitempty" json:"secret,omitempty"`
 	Required bool   `yaml:"required,omitempty" json:"required,omitempty"`
 	Default  string `yaml:"default,omitempty" json:"default,omitempty"`
+}
+
+// IsSecret es la ÚNICA forma correcta de preguntar si un campo lleva un
+// secreto. Hay dos maneras válidas de declararlo y las dos tienen que
+// contar: secret=true (el booleano explícito) y type="secret" (lo natural
+// de escribir en Asterion Language, y lo que el compilador emite tal cual).
+//
+// Mirar solo .Secret es un bug con consecuencias: un campo declarado
+// type="secret" se trataría como público y terminaría, por ejemplo, en el
+// .env que 'plugin export' arma para el frontend. Todo chequeo de secretos
+// pasa por acá.
+func (f ConfigField) IsSecret() bool {
+	return f.Secret || f.Type == "secret"
 }
 
 // LanguageSpec identifica en qué está escrito el plugin — el dashboard y
@@ -134,6 +147,56 @@ type ActionSpec struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
+// ServiceSpec declara UN servicio externo que el plugin necesita.
+//
+// La parte que hace esto útil y no solo documentación son los campos
+// Maps*: dicen a QUÉ CLAVES del propio config_schema del plugin hay que
+// volcar los datos de conexión una vez resueltos. Así el plugin sigue
+// leyendo su config como siempre (ASTERION_PLUGIN_CONFIG_BOT_DB_HOST,
+// etc.) sin saber que Asterion fue quien la completó, y nadie tiene que
+// copiar valores a mano entre una base recién creada y la config.
+//
+// Asterion NUNCA instala nada por su cuenta a partir de esto: primero
+// detecta si ya hay un servicio de ese tipo funcionando y lo usa (ahí
+// solo crea la base y el usuario que falten). Levantar el motor en un
+// contenedor es un paso aparte que hay que pedir explícitamente.
+type ServiceSpec struct {
+	// Name identifica el servicio dentro del plugin (ej. "bot_db",
+	// "main_db", "cache") — un plugin puede declarar varios del mismo
+	// Kind, como fuelity_bot, que usa dos bases distintas.
+	Name string `yaml:"name" json:"name"`
+
+	// Kind es el motor: postgres | mysql | mariadb | redis.
+	Kind string `yaml:"kind" json:"kind"`
+
+	// Version es la que se usa SOLO si hay que levantar el motor en un
+	// contenedor (ej. "16" -> postgres:16). Con un servicio ya existente
+	// no se valida contra esto: si ya está corriendo, se usa como está.
+	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+
+	// Database/User: qué base y qué usuario hay que asegurar dentro del
+	// motor. Vacío en Kind=redis (Redis no tiene ni una cosa ni la otra).
+	Database string `yaml:"database,omitempty" json:"database,omitempty"`
+	User     string `yaml:"user,omitempty" json:"user,omitempty"`
+
+	// Maps* son claves del config_schema de ESTE plugin. Cada una que se
+	// declare recibe el dato correspondiente al resolver el servicio. Una
+	// clave que no exista en config_schema es un error de validación —
+	// un typo acá dejaría al plugin sin config y sin aviso.
+	MapsHost     string `yaml:"maps_host,omitempty" json:"maps_host,omitempty"`
+	MapsPort     string `yaml:"maps_port,omitempty" json:"maps_port,omitempty"`
+	MapsUser     string `yaml:"maps_user,omitempty" json:"maps_user,omitempty"`
+	MapsPassword string `yaml:"maps_password,omitempty" json:"maps_password,omitempty"`
+	MapsDatabase string `yaml:"maps_database,omitempty" json:"maps_database,omitempty"`
+	// MapsURL recibe la URL de conexión completa, para un plugin que
+	// prefiera una sola variable (ej. DATABASE_URL) en vez de los campos
+	// sueltos. Se puede declarar junto con los demás.
+	MapsURL string `yaml:"maps_url,omitempty" json:"maps_url,omitempty"`
+}
+
+// serviceKinds son los motores que Asterion sabe detectar y configurar.
+var serviceKinds = map[string]bool{"postgres": true, "mysql": true, "mariadb": true, "redis": true}
+
 // EventsSpec es, en v1, puramente declarativo: documenta qué eventos
 // publica/consume el plugin, pero no existe todavía un bus de eventos real
 // en Asterion que los transporte. Se incluye desde ya en el contrato para
@@ -173,6 +236,14 @@ type Manifest struct {
 	Resources   []ResourceSpec   `yaml:"resources,omitempty" json:"resources,omitempty"`
 	Actions     []ActionSpec     `yaml:"actions,omitempty" json:"actions,omitempty"`
 	Events      *EventsSpec      `yaml:"events,omitempty" json:"events,omitempty"`
+
+	// Services son los servicios EXTERNOS que el plugin necesita para
+	// funcionar (una base de datos, un Redis). Declararlos acá es lo que
+	// permite que Asterion los detecte, los configure y vuelque los datos
+	// de conexión en la config cifrada del plugin — en vez de que alguien
+	// tenga que crear la base a mano y despues tipear host/puerto/usuario/
+	// contraseña uno por uno. Ver ServiceSpec.
+	Services []ServiceSpec `yaml:"services,omitempty" json:"services,omitempty"`
 }
 
 var crudOps = map[string]bool{"create": true, "read": true, "update": true, "delete": true, "list": true}
@@ -229,6 +300,37 @@ func (m Manifest) Validate() error {
 		for _, op := range r.CRUD {
 			if !crudOps[op] {
 				return fmt.Errorf("resource %q: crud %q no reconocido (create|read|update|delete|list)", r.Name, op)
+			}
+		}
+	}
+
+	configKeys := map[string]bool{}
+	for _, f := range m.ConfigSchema {
+		configKeys[f.Key] = true
+	}
+	seenServices := map[string]bool{}
+	for _, svc := range m.Services {
+		if svc.Name == "" {
+			return fmt.Errorf("plugin.yaml: services tiene un elemento sin 'name'")
+		}
+		if seenServices[svc.Name] {
+			return fmt.Errorf("plugin.yaml: hay dos services llamados %q — los nombres deben ser únicos", svc.Name)
+		}
+		seenServices[svc.Name] = true
+		if !serviceKinds[svc.Kind] {
+			return fmt.Errorf("service %q: kind %q no reconocido (postgres|mysql|mariadb|redis)", svc.Name, svc.Kind)
+		}
+		if svc.Kind == "redis" && (svc.Database != "" || svc.User != "") {
+			return fmt.Errorf("service %q: redis no tiene 'database' ni 'user' — sacalos del manifiesto", svc.Name)
+		}
+		// Un maps_* que apunte a una clave inexistente dejaría al plugin
+		// sin ese dato y sin ningún aviso: se rechaza acá, al validar.
+		for label, key := range map[string]string{
+			"maps_host": svc.MapsHost, "maps_port": svc.MapsPort, "maps_user": svc.MapsUser,
+			"maps_password": svc.MapsPassword, "maps_database": svc.MapsDatabase, "maps_url": svc.MapsURL,
+		} {
+			if key != "" && !configKeys[key] {
+				return fmt.Errorf("service %q: %s apunta a %q, que no existe en config_schema", svc.Name, label, key)
 			}
 		}
 	}

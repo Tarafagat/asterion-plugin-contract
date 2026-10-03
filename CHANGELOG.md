@@ -5,7 +5,51 @@ Este proyecto todavía no tiene releases etiquetados en git.
 
 ## [Unreleased]
 
+### Fixed
+- **`ConfigField.IsSecret()`**: un campo declarado `type: "secret"` (la
+  forma que emite el compilador de Asterion Language, `Contract.config(...,
+  type="secret")`) se trataba como público en todo lugar que miraba
+  directo el booleano `.Secret` — salía en claro en `plugin config show` y
+  podía terminar en el `.env` que `asterion plugin export` arma para el
+  frontend. `IsSecret()` es ahora el único predicado correcto (`f.Secret
+  || f.Type == "secret"`); los cinco sitios que miraban `.Secret` sin pasar
+  por acá (en `asterion-core`, en `asterion-graph-cognitive-architecture`,
+  y en el `sdk/go/pdk` de este mismo repo) pasan a usarlo. §4 actualizada.
+- **`schema/apc-v1.schema.json`** no listaba `"secret"` como valor válido
+  de `config_schema[].type` (solo `string`/`number`/`bool`) — un
+  `plugin.yaml` real, válido para `apc.Manifest`, fallaba contra este
+  espejo. Corregido.
+
+### Added
+- **`services`** (`apc.ServiceSpec`, nueva §10): un plugin declara la
+  infraestructura externa que necesita (una base `postgres`/`mysql`/
+  `mariadb`, o un `redis`) y a qué claves de su propio `config_schema`
+  volcar la conexión una vez resuelta (`maps_host`/`maps_port`/
+  `maps_user`/`maps_password`/`maps_database`/`maps_url`).
+  `Manifest.Validate()` exige nombres únicos, un `kind` soportado, que
+  `redis` no declare `database`/`user` (no tiene ninguno de los dos), y
+  que cada `maps_*` nombre una clave real de `config_schema` — un typo ahí
+  dejaría al plugin silenciosamente sin configurar. Quién resuelve esto
+  en la práctica (detectar el motor, crear base/usuario, o levantar un
+  contenedor solo si se pide explícito) es `asterion plugin services` en
+  `asterion-core`, no este paquete — ver su README y `internal/pluginsvc`.
+  `schema/apc-v1.schema.json` ganó la propiedad correspondiente (no puede
+  expresar la referencia cruzada a `config_schema`, eso sigue siendo
+  responsabilidad exclusiva de `Validate()`).
+- **`Contract.service(...)`** en Asterion Language (repo hermano) compila
+  a lo de arriba — ver `asterion-language/spec/grammar.md` y
+  `asterion-language/examples/plugin-services.asterion`.
+
 ### Changed
+- **Renumeración de `spec/apc-v1.md`**: §10 "Servicios externos" es
+  nueva (ver "Added" arriba) e insertada entre la vieja §9 (Eventos) y la
+  vieja §10 (Health check) — todo de ahí en más se corrió +1 (Health
+  check pasa a §11, Lifecycle a §12, Versionado a §13, Herramientas a
+  §14, "Cómo encaja `asterion-language`" a §15). Mismo criterio que la
+  renumeración anterior registrada más abajo en este changelog: el
+  contenido no cambia de lugar por capricho, se referencia por número en
+  varios puntos del documento y hay que mantenerlo consistente en el
+  mismo commit que lo mueve.
 - **`spec/apc-v1.md` gana una sección formal de `declared` / `implemented`
   / `enforced`** (nueva §2, todo lo posterior se corrió +1). Motivada por
   una revisión externa del contrato: varias capacidades (`permissions`,

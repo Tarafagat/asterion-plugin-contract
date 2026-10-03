@@ -41,7 +41,7 @@
         "properties": {
           "key": { "type": "string", "minLength": 1 },
           "label": { "type": "string" },
-          "type": { "type": "string", "enum": ["string", "number", "bool"] },
+          "type": { "type": "string", "enum": ["string", "number", "bool", "secret"] },
           "secret": { "type": "boolean" },
           "required": { "type": "boolean" },
           "default": { "type": "string" }
@@ -99,6 +99,26 @@
       "properties": {
         "publishes": { "type": "array", "items": { "type": "string" } },
         "subscribes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["postgres", "mysql", "mariadb", "redis"] },
+          "version": { "type": "string" },
+          "database": { "type": "string" },
+          "user": { "type": "string" },
+          "maps_host": { "type": "string" },
+          "maps_port": { "type": "string" },
+          "maps_user": { "type": "string" },
+          "maps_password": { "type": "string" },
+          "maps_database": { "type": "string" },
+          "maps_url": { "type": "string" }
+        }
       }
     }
   }

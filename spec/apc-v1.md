@@ -63,9 +63,9 @@ el schema.
 
 | Capacidad | `declared` | `implemented` | `enforced` | Detalle |
 |---|:---:|:---:|:---:|---|
-| `contract_version` | ✅ | ✅ | ✅ | Versión no reconocida → instalación rechazada (`apc.Manifest.Validate`, §12) |
+| `contract_version` | ✅ | ✅ | ✅ | Versión no reconocida → instalación rechazada (`apc.Manifest.Validate`, §13) |
 | `name`/`version`/`port`/`start.command` (forma estructural) | ✅ | ✅ | ✅ | `Validate()` rechaza un manifiesto que no cumple la forma obligatoria — nunca llega a instalarse |
-| `health_path` | ✅ | ✅ | ✅ | Asterion sondea este endpoint después de `start`; sin una respuesta 2xx, el arranque no se da por exitoso (§10) |
+| `health_path` | ✅ | ✅ | ✅ | Asterion sondea este endpoint después de `start`; sin una respuesta 2xx, el arranque no se da por exitoso (§11) |
 | `config_schema[].secret` | ✅ | ✅ | ✅ | Cifrado real AES-256-GCM (`internal/secretbox`) — el valor en texto plano nunca se vuelve a mostrar (§4) |
 | `config_schema` (resto de campos) | ✅ | ✅ | — | Genera el formulario del dashboard; no valida que el plugin realmente use lo que declaró (§4) |
 | `resources[].crud` | ✅ | ✅ | — | Controla qué botones ofrece el dashboard y qué llama `asterion plugin dev`; no impide que la API real del plugin acepte otra operación si se la llama directo (§6) |
@@ -73,6 +73,8 @@ el schema.
 | `api.openapi`, `resources[].schema` | ✅ | ✅ (parcial) | — | `asterion plugin validate` confirma que el archivo existe y es YAML/JSON *sintácticamente* válido — no que sea un OpenAPI 3 o JSON Schema semánticamente correcto (queda para una versión futura del validador, ver el comentario en `apc/validate.go`) |
 | `permissions.*` | ✅ | ✅ | ❌ | Se muestra en el dashboard ("Permisos declarados", `frontend-core/src/App.tsx`); el plugin corre igual como proceso normal con los privilegios completos del usuario que lo instaló — nada lo hace cumplir a nivel de sistema operativo (§8) |
 | `events.publishes`/`events.subscribes` | ✅ | ❌ | ❌ | Puramente de ida y vuelta por el schema — confirmado: cero referencias a estos campos en todo `asterion-core`, ningún bus de eventos existe todavía (§9) |
+| `services[]` (forma: `kind` soportado, `redis` sin `database`/`user`, cada `maps_*` referencia una clave real de `config_schema`) | ✅ | ✅ | ✅ | `Validate()` rechaza un manifiesto con un `maps_*` que apunta a una clave que no existe, un `kind` no soportado, o un `redis` con `database`/`user` — nunca llega a instalarse (§10) |
+| `services[]` (resolución: detectar el motor, crear base/usuario, volcar la conexión) | ✅ | ✅ | ✅ (parcial) | Lo hace `asterion plugin services` en `asterion-core` (`internal/pluginsvc`), no este paquete. Un contenedor que ese comando crea nunca es `--privileged` y publica solo en `127.0.0.1` (enforced de verdad) — pero eso es sobre el CONTENEDOR del servicio, no sobre el proceso del plugin mismo, que sigue sin sandboxear (misma salvedad que `permissions.*` arriba) (§10) |
 
 Cuando el estado real de una fila cambie (por ejemplo, el día que exista
 un bus de eventos real, o un validador de OpenAPI 3 completo), esta tabla
@@ -102,6 +104,7 @@ anterior a este contrato) sigue siendo válido.
 | `resources` | no | Qué recursos administrables expone (§6) |
 | `actions` | no | Qué operaciones no-CRUD expone (§7) |
 | `events` | no | Qué eventos publica/consume — declarativo (§9) |
+| `services` | no | Qué infraestructura externa (base de datos, Redis) necesita — ver §10 |
 
 ### Ejemplo completo
 
@@ -159,8 +162,11 @@ Ver el plugin completo y funcionando en
 Cada entrada de `config_schema` es un dato que el plugin necesita para
 operar. Asterion genera el formulario de configuración automáticamente a
 partir de esta lista — el plugin no escribe ni una línea de UI. Los campos
-marcados `secret: true` se guardan cifrados (AES-256-GCM, clave local) y
-nunca se vuelven a mostrar en texto plano.
+marcados `secret: true` **o** `type: "secret"` (las dos formas son
+equivalentes — `apc.ConfigField.IsSecret()` es el único predicado
+correcto, mirar el booleano solo es un bug: un campo declarado así por
+`type` se trataría como público) se guardan cifrados (AES-256-GCM, clave
+local) y nunca se vuelven a mostrar en texto plano.
 
 El plugin recibe su configuración exclusivamente como variables de entorno
 `ASTERION_PLUGIN_CONFIG_<CLAVE>` (en mayúsculas) al arrancar — nunca un
@@ -217,7 +223,54 @@ estos campos. Se incluye desde ahora en el contrato para que un
 exista — pero un plugin no debe asumir que declarar esto tiene ningún
 efecto todavía.
 
-## 10. Health check
+## 10. Servicios externos
+
+`services` declara la infraestructura que el plugin necesita para
+funcionar pero que no corre dentro de su propio proceso — hoy, una base de
+datos (`postgres`, `mysql`, `mariadb`) o un `redis`. Cada entrada tiene un
+`name` propio (un plugin puede necesitar dos bases distintas, ej. una
+principal y una de analítica), un `kind`, opcionalmente `database`/`user`
+(`redis` no acepta ninguno de los dos — no tiene ni bases ni usuarios), y
+los `maps_*` que dicen a qué clave de `config_schema` volcar cada dato de
+la conexión una vez resuelta (`maps_host`, `maps_port`, `maps_user`,
+`maps_password`, `maps_database`, `maps_url` para quien prefiera una sola
+variable de conexión completa en vez de los campos sueltos).
+
+```yaml
+services:
+  - name: db
+    kind: postgres
+    version: "16"
+    database: miapp
+    user: miapp_app
+    maps_host: DB_HOST
+    maps_port: DB_PORT
+    maps_user: DB_USER
+    maps_password: DB_PASSWORD
+    maps_database: DB_NAME
+```
+
+Cada `maps_*` que se declara **tiene que** nombrar una clave que exista en
+el `config_schema` del mismo manifiesto — `Validate()` lo rechaza si no
+(ver la fila de §2). No es opcional ni una validación cruzada "de más":
+sin ella, un `maps_host="DB_HOTS"` mal tipeado dejaría al plugin
+silenciosamente sin configurar, sin ningún error que lo señale. El JSON
+Schema (`schema/apc-v1.schema.json`) no puede expresar esta regla —
+draft-07 no tiene forma de decir "este string tiene que ser una de las
+claves de aquel otro array" sin extensiones no estándar — así que
+`Validate()` en `apc/manifest.go` es la única fuente de verdad real para
+esta regla puntual; el JSON Schema valida la FORMA de `services[]`, no
+esta referencia cruzada.
+
+Quién resuelve esto (detecta si el motor ya existe, crea la base/usuario
+que falten, levanta un contenedor solo si se pide explícitamente) es
+`asterion plugin services` en `asterion-core` — este paquete (`apc`) solo
+declara y valida la forma, nunca ejecuta nada contra un motor real. Ver el
+README de `asterion-core` § "`asterion plugin services`" para el
+comportamiento completo, y `asterion-core/internal/pluginsvc` para la
+implementación.
+
+## 11. Health check
 
 Todo plugin debe responder en `health_path` (default `/health`) con un
 código HTTP 2xx cuando está sano. `pdk.HealthHandler` (Go) devuelve además
@@ -226,7 +279,7 @@ un cuerpo `{"status": "healthy"|"degraded"|"unhealthy", "detail": "..."}`
 éxito, pero el cuerpo queda disponible para una vista de estado más
 detallada en el dashboard.
 
-## 11. Lifecycle
+## 12. Lifecycle
 
 Asterion administra un plugin instalado con estas operaciones (ver
 `asterion plugin --help`):
@@ -245,7 +298,7 @@ No hay un paso de "update" separado en v1: reinstalar (`remove` + `install`
 de nuevo) cubre ese caso hasta que exista una necesidad real de distinguir
 "actualizar" de "reinstalar".
 
-## 12. Versionado y compatibilidad
+## 13. Versionado y compatibilidad
 
 `contract_version` identifica qué versión de este documento implementa el
 manifiesto. Si no se declara, se asume `asterion.plugin/v1` (compatibilidad
@@ -255,7 +308,7 @@ en vez de asumir que es compatible — la lista de versiones soportadas vive
 en `apc.ContractVersion` y crece a medida que existan versiones futuras del
 contrato.
 
-## 13. Herramientas
+## 14. Herramientas
 
 - **`asterion plugin init --language go`** — scaffolding: genera un plugin
   en Go que ya cumple el contrato (health check + un resource + una action
@@ -277,18 +330,30 @@ contrato.
 - **`asterion plugin from-asterion <archivo.asterion>`** — alternativa sin
   heurística a lo anterior: el autor declara cada campo del contrato
   explícito con llamadas `Contract.<verbo>(...)` en Asterion Language, sin
-  nada que adivinar. Ver §14.
+  nada que adivinar. Ver §15.
+- **`asterion plugin services <dir>`** — resuelve lo declarado en
+  `services` (§10): detecta si el motor ya existe, configura una base y
+  un usuario dentro de lo que encuentra, y recién levanta un contenedor
+  si se pide explícito (`--create`). Vive en `asterion-core`, no en este
+  paquete — ver su README.
+- **`asterion import <dir>`** — la dirección inversa: a partir de un
+  proyecto que no sabe nada de este contrato (un `Dockerfile`, un
+  `docker-compose.yml`, un `.env.example`...), genera un borrador de
+  `.asterion` — incluyendo, cuando detecta una base de datos o un Redis
+  declarado ahí, el `Contract.service(...)` correspondiente. También en
+  `asterion-core`.
 - **[`sdk/go/pdk`](../sdk/go/pdk)** — utilidades para plugins en Go: config,
   logging estándar, forma de error unificada, health handler.
 
-## 14. Cómo encaja `asterion-language`
+## 15. Cómo encaja `asterion-language`
 
 Este contrato es la especificación que [`asterion-language`](https://github.com/Tarafagat/asterion-language)
 *apunta*, no lo contrario — el paquete `pluginmanifest` de ese repo compila
-un `.asterion` con llamadas `Contract.define/config/resource/action/...` a
-un `apc.Manifest` real (el mismo tipo Go de este repo, sin una segunda
-definición del contrato), invocado como `asterion plugin from-asterion`
-(§13). El contrato en sí no depende de que exista un lenguaje propio, y
-nunca lo hará: cualquier lenguaje que pueda hablar HTTP puede implementar
+un `.asterion` con llamadas `Contract.define/config/resource/action/
+service/...` a un `apc.Manifest` real (el mismo tipo Go de este repo, sin
+una segunda definición del contrato), invocado como `asterion plugin
+from-asterion` (§14). El contrato en sí no depende de que exista un
+lenguaje propio, y nunca lo hará: cualquier lenguaje que pueda hablar HTTP
+puede implementar
 un plugin de Asterion — `asterion-language` es una forma más directa de
 *escribir* el manifiesto, no un requisito para *ser* un plugin válido.
